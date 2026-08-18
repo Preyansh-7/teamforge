@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Browse Projects — TeamForge</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav__row">
+    <a href="index" class="nav__brand"><span class="mark"></span> TeamForge</a>
+    <div class="nav__links">
+      <a href="project-new" class="hide-mobile">Create Project</a>
+      <div id="nav-auth" style="display:flex; gap:12px; align-items:center;"></div>
+    </div>
+  </div>
+</nav>
+
+<section style="padding-top:36px;">
+  <div class="container">
+    <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px; margin-bottom:24px;">
+      <div>
+        <h2 style="margin-bottom:4px;">Browse Projects</h2>
+        <p class="muted" style="margin:0;">Find a project that matches your skills.</p>
+      </div>
+      <a href="project-new" class="btn btn--accent">Create Project</a>
+    </div>
+
+    <div class="card" style="display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; margin-bottom:24px;">
+      <div class="field" style="flex:2; min-width:220px; margin-bottom:0;">
+        <label for="search">Search</label>
+        <input type="text" id="search" placeholder="Search by title or description">
+      </div>
+      <div class="field" style="flex:1; min-width:160px; margin-bottom:0;">
+        <label for="category-filter">Category</label>
+        <select id="category-filter"><option value="">All categories</option></select>
+      </div>
+      <div class="field" style="flex:1; min-width:160px; margin-bottom:0;">
+        <label for="skill-filter">Skill</label>
+        <select id="skill-filter"><option value="">All skills</option></select>
+      </div>
+      <div class="field" style="flex:1; min-width:160px; margin-bottom:0;">
+        <label for="sort">Sort by</label>
+        <select id="sort">
+          <option value="newest">Newest</option>
+          <option value="match">Best match</option>
+          <option value="open-spots">Most open spots</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="grid grid--2" id="projects-list">
+      <span class="muted">Loading projects…</span>
+    </div>
+  </div>
+</section>
+
+<script type="module">
+  import { watchAuthState } from "./js/auth.js";
+  import { listOpenProjects } from "./js/db/projects.js";
+  import { listActiveSkills } from "./js/db/skills.js";
+  import { listActiveCategories } from "./js/db/categories.js";
+  import { computeMatch } from "./js/matching.js";
+  import { qs, el, statusLabel, renderNavAuth } from "./js/ui.js";
+
+  let currentProfile = null;
+  let skillsById = {};
+  let allProjects = [];
+
+  watchAuthState(async (user, profile, isAdmin) => {
+    renderNavAuth(qs("#nav-auth"), user, profile, isAdmin);
+    currentProfile = profile;
+    await init();
+  });
+
+  async function init() {
+    const result = await Promise.all([
+      listActiveSkills(), listActiveCategories(), listOpenProjects()
+    ]).catch(err => {
+      console.error("Failed to load marketplace data:", err);
+      return null; // signal failure without masking it below
+    });
+
+    if (!result) { render(null, true); return; } // stop here - don't let a later render() erase the error
+    const [skills, categories, projects] = result;
+
+    skillsById = Object.fromEntries(skills.map(s => [s.id, s]));
+    allProjects = projects;
+
+    const catSelect = qs("#category-filter");
+    categories.forEach(c => catSelect.appendChild(el("option", { value: c.name }, c.name)));
+    const skillSelect = qs("#skill-filter");
+    skills.forEach(s => skillSelect.appendChild(el("option", { value: s.id }, s.name)));
+
+    render();
+  }
+
+  ["search", "category-filter", "skill-filter", "sort"].forEach(id => {
+    document.addEventListener("input", (e) => { if (e.target.id === id) render(); });
+    document.addEventListener("change", (e) => { if (e.target.id === id) render(); });
+  });
+
+  function render(_projects, error) {
+    const list = qs("#projects-list");
+    list.innerHTML = "";
+
+    if (error) {
+      list.appendChild(el("div", { class: "empty" }, [
+        el("h3", {}, "Couldn't load projects"),
+        el("p", {}, "Open the browser console (F12) for the exact error. The most common cause on a new Firebase project is a missing composite index - Firestore's error message includes a direct link to create it with one click. Also double-check js/firebase-config.js is filled in and firestore.rules is deployed.")
+      ]));
+      return;
+    }
+
+    const search = (qs("#search").value || "").toLowerCase();
+    const category = qs("#category-filter").value;
+    const skillId = qs("#skill-filter").value;
+    const sort = qs("#sort").value;
+
+    let filtered = allProjects.filter(p => {
+      const matchesSearch = !search || (p.title || "").toLowerCase().includes(search) || (p.description || "").toLowerCase().includes(search);
+      const matchesCategory = !category || p.category === category;
+      const matchesSkill = !skillId || (p.requiredSkills || []).includes(skillId);
+      return matchesSearch && matchesCategory && matchesSkill;
+    });
+
+    const withScores = filtered.map(p => ({
+      project: p,
+      match: currentProfile ? computeMatch(currentProfile, p, skillsById) : null
+    }));
+
+    if (sort === "match" && currentProfile) {
+      withScores.sort((a, b) => b.match.percent - a.match.percent);
+    } else if (sort === "open-spots") {
+      withScores.sort((a, b) => (b.project.maxTeamSize - (b.project.members || []).length) - (a.project.maxTeamSize - (a.project.members || []).length));
+    } else {
+      withScores.sort((a, b) => (b.project.createdAt?.seconds || 0) - (a.project.createdAt?.seconds || 0));
+    }
+
+    if (!withScores.length) {
+      list.appendChild(el("div", { class: "empty" }, [
+        el("h3", {}, "No projects match those filters"),
+        el("p", {}, "Try clearing a filter, or be the first to post one."),
+        el("a", { href: "project-new", class: "btn btn--accent" }, "Create a Project")
+      ]));
+      return;
+    }
+
+    withScores.forEach(({ project, match }) => list.appendChild(card(project, match)));
+  }
+
+  function card(project, match) {
+    const openSpots = project.maxTeamSize - (project.members || []).length;
+    const top = el("div", { class: "ticket__top" }, [
+      el("div", {}, [
+        el("h3", { class: "ticket__title" }, [el("a", { href: `project-detail?id=${project.id}` }, project.title)]),
+        el("p", { class: "ticket__desc" }, project.description || "")
+      ]),
+      match ? el("div", { class: "stamp" }, [el("strong", {}, `${match.percent}%`), el("span", {}, "Match")]) : el("span", { class: `badge badge--${project.status}` }, statusLabel(project.status))
+    ]);
+    const tags = el("div", { class: "ticket__tags" });
+    (project.requiredSkills || []).forEach(id => {
+      const label = (skillsById[id] && skillsById[id].name) || id;
+      tags.appendChild(el("span", { class: "tag" }, label));
+    });
+    const meta = el("div", { class: "ticket__meta" }, [
+      el("span", {}, `${(project.members || []).length} / ${project.maxTeamSize} members`),
+      el("span", {}, openSpots > 0 ? `${openSpots} open spot${openSpots === 1 ? "" : "s"}` : "Full"),
+      el("span", {}, project.category || "")
+    ]);
+    return el("div", { class: "ticket" }, [top, tags, meta]);
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign up — TeamForge</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav__row">
+    <a href="index" class="nav__brand"><span class="mark"></span> TeamForge</a>
+    <div class="nav__links"><a href="login">Log in instead</a></div>
+  </div>
+</nav>
+
+<section>
+  <div class="container container--narrow">
+    <div class="card form-card">
+      <h2>Create your account</h2>
+      <p class="muted">Takes about a minute. You'll build your skills profile next.</p>
+      <form id="signup-form">
+        <div class="field">
+          <label for="name">Full name</label>
+          <input type="text" id="name" required>
+        </div>
+        <div class="field">
+          <label for="email">Email</label>
+          <input type="email" id="email" required autocomplete="email">
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input type="password" id="password" required minlength="6" autocomplete="new-password">
+          <small>At least 6 characters.</small>
+        </div>
+        <div class="field-error" id="form-error"></div>
+        <button type="submit" class="btn btn--primary btn--full" id="submit-btn">Sign up</button>
+      </form>
+      <p class="muted" style="margin-top:16px; text-align:center;">Already have an account? <a href="login">Log in</a></p>
+    </div>
+  </div>
+</section>
+
+<script type="module">
+  import { signUp } from "./js/auth.js";
+  import { toast, qs } from "./js/ui.js";
+
+  qs("#signup-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const errorBox = qs("#form-error");
+    const btn = qs("#submit-btn");
+    errorBox.textContent = "";
+    btn.disabled = true; btn.textContent = "Creating account…";
+    try {
+      await signUp(qs("#name").value.trim(), qs("#email").value.trim(), qs("#password").value);
+      toast("Account created", "success");
+      window.location.href = "profile-setup";
+    } catch (err) {
+      errorBox.textContent = friendlyError(err);
+      btn.disabled = false; btn.textContent = "Sign up";
+    }
+  });
+
+  function friendlyError(err) {
+    const code = err.code || "";
+    if (code.includes("email-already-in-use")) return "That email already has an account. Try logging in.";
+    if (code.includes("weak-password")) return "Password is too weak — use at least 6 characters.";
+    if (code.includes("invalid-email")) return "That email address doesn't look valid.";
+    return "Something went wrong. Please try again.";
+  }
+</script>
+</body>
+</html>

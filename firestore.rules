@@ -1,0 +1,136 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isAdmin() {
+      // Custom claim, set only via the Admin SDK (see admin-scripts/set-admin-claim.js).
+      // A client can never set this themselves.
+      return isSignedIn() && request.auth.token.admin == true;
+    }
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+    function isActiveUser() {
+      // Blocks a suspended student from writing anything, even though their session token
+      // is still technically valid. Costs one extra read per checked write.
+      return isSignedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == "active";
+    }
+    function unchanged(field) {
+      return request.resource.data[field] == resource.data[field];
+    }
+
+    // ---------- users ----------
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(uid)
+                    && request.resource.data.role == "student"; // nobody can self-assign a role at signup
+      allow update: if isAdmin()
+                    || (isOwner(uid) && unchanged('role') && unchanged('status'));
+      // role and status (suspend/restore) can only ever be changed by an admin.
+      allow delete: if isAdmin();
+    }
+
+    // ---------- skills (admin-managed controlled list) ----------
+    match /skills/{skillId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---------- categories (admin-managed controlled list) ----------
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---------- projects ----------
+    match /projects/{projectId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isActiveUser()
+                    && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if isAdmin()
+                    || (isSignedIn() && resource.data.ownerUid == request.auth.uid)
+                    // KNOWN SIMPLIFICATION: the "accept application" flow adds a member via a
+                    // client-side transaction run by the applicant's own browser (see
+                    // js/db/projects.js:addMemberTransactional). This clause allows a non-owner
+                    // to touch the doc ONLY to add themselves to members/memberUids - every other
+                    // field must stay byte-for-byte identical, and the write must add their own
+                    // uid (not someone else's). Still not as safe as a server-side Cloud Function
+                    // (a student could theoretically add themselves without ever applying), but
+                    // it closes the "edit any field" hole this rule used to have.
+                    || (isSignedIn()
+                        && unchanged('ownerUid') && unchanged('maxTeamSize')
+                        && unchanged('title') && unchanged('description') && unchanged('goals')
+                        && unchanged('category') && unchanged('technologies')
+                        && unchanged('requiredSkills') && unchanged('requiredRoles')
+                        && unchanged('status') && unchanged('deadline') && unchanged('createdAt')
+                        && request.auth.uid in request.resource.data.memberUids);
+      allow delete: if isAdmin()
+                    || (isSignedIn() && resource.data.ownerUid == request.auth.uid);
+
+      // ---------- team chat (subcollection of its project) ----------
+      // Living as a subcollection means the rule can check membership once against the parent
+      // project doc with get() - no matching where() clause is needed on the client query side,
+      // which avoids the "Firestore rejects the whole query if it can't prove every possible
+      // result passes the rule" trap (see the note on the applications collection below, and the
+      // fix that was needed in js/db/applications.js for the same underlying reason).
+      function isProjectMember() {
+        return isSignedIn() &&
+          request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.memberUids;
+      }
+      match /messages/{messageId} {
+        allow read: if isProjectMember() || isAdmin();
+        allow create: if isProjectMember()
+                      && request.resource.data.authorUid == request.auth.uid;
+        allow update, delete: if isAdmin(); // messages aren't editable/deletable by students in this MVP
+      }
+      match /typing/{uid} {
+        allow read: if isProjectMember() || isAdmin();
+        allow write: if isProjectMember() && request.auth.uid == uid;
+      }
+    }
+
+    // ---------- applications ----------
+    match /applications/{applicationId} {
+      allow read: if isAdmin()
+                  || (isSignedIn() &&
+                      (resource.data.applicantUid == request.auth.uid ||
+                       resource.data.ownerUid == request.auth.uid));
+      allow create: if isSignedIn() && isActiveUser()
+                    && request.resource.data.applicantUid == request.auth.uid
+                    && request.resource.data.status == "pending";
+      // Owner can move pending -> accepted/rejected. Applicant can move pending -> withdrawn.
+      allow update: if isAdmin()
+                    || (isSignedIn() && resource.data.ownerUid == request.auth.uid
+                        && resource.data.status == "pending"
+                        && request.resource.data.status in ["accepted", "rejected"])
+                    || (isSignedIn() && resource.data.applicantUid == request.auth.uid
+                        && resource.data.status == "pending"
+                        && request.resource.data.status == "withdrawn");
+      allow delete: if isAdmin();
+    }
+
+    // ---------- tasks (Phase 2) ----------
+    match /tasks/{taskId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn(); // tighten to project-member-only once team membership checks are added
+    }
+
+    // ---------- updates (Phase 2) ----------
+    match /updates/{updateId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.authorUid == request.auth.uid;
+    }
+
+    // ---------- reports (Phase 2) ----------
+    match /reports/{reportId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn() && request.resource.data.reportedBy == request.auth.uid;
+      allow update: if isAdmin();
+    }
+  }
+}

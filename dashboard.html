@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — TeamForge</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav__row">
+    <a href="index" class="nav__brand"><span class="mark"></span> TeamForge</a>
+    <div class="nav__links">
+      <a href="projects" class="hide-mobile">Browse Projects</a>
+      <div id="nav-auth" style="display:flex; gap:12px; align-items:center;"></div>
+    </div>
+  </div>
+</nav>
+
+<section style="padding-top:36px;">
+  <div class="container">
+
+    <div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:28px;">
+      <div>
+        <h2 id="welcome-name" style="margin-bottom:4px;">Welcome</h2>
+        <div class="ticket__tags" id="profile-skills"></div>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <a href="project-new" class="btn btn--accent">Create Project</a>
+        <a href="projects" class="btn btn--outline">Browse Projects</a>
+        <a href="profile-edit" class="btn btn--outline">Edit Profile</a>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="my-projects">My Projects</button>
+      <button class="tab" data-tab="joined">Joined Projects</button>
+      <button class="tab" data-tab="applications">Applications</button>
+    </div>
+
+    <div id="tab-my-projects" class="tab-panel">
+      <div class="grid grid--2" id="my-projects-list"><span class="muted">Loading…</span></div>
+    </div>
+    <div id="tab-joined" class="tab-panel" style="display:none;">
+      <div class="grid grid--2" id="joined-list"><span class="muted">Loading…</span></div>
+    </div>
+    <div id="tab-applications" class="tab-panel" style="display:none;">
+      <div id="applications-list"><span class="muted">Loading…</span></div>
+    </div>
+
+  </div>
+</section>
+
+<script type="module">
+  import { requireAuth } from "./js/auth.js";
+  import { listProjectsByOwner, listJoinedProjects, getProject } from "./js/db/projects.js";
+  import { listApplicationsForApplicant, withdrawApplication } from "./js/db/applications.js";
+  import { listActiveSkills } from "./js/db/skills.js";
+  import { qs, qsa, el, statusLabel, toast, renderNavAuth } from "./js/ui.js";
+
+  let uid = null;
+  let skillsById = {};
+
+  requireAuth(async (user, profile, isAdmin) => {
+    if (isAdmin) { window.location.href = "admin/index"; return; }
+    if (profile && !profile.profileComplete) { window.location.href = "profile-setup"; return; }
+    uid = user.uid;
+    renderNavAuth(qs("#nav-auth"), user, profile, isAdmin);
+
+    qs("#welcome-name").textContent = `Welcome, ${(profile && profile.name) || "there"}`;
+    const allSkills = await listActiveSkills();
+    skillsById = Object.fromEntries(allSkills.map(s => [s.id, s]));
+    const skillsBox = qs("#profile-skills");
+    (profile.skills || []).forEach(id => {
+      skillsBox.appendChild(el("span", { class: "tag" }, (skillsById[id] && skillsById[id].name) || id));
+    });
+
+    loadMyProjects();
+    loadJoinedProjects();
+    loadApplications();
+  }, () => { window.location.href = "login"; });
+
+  qsa(".tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      qsa(".tab").forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      qsa(".tab-panel").forEach(p => p.style.display = "none");
+      qs(`#tab-${tab.dataset.tab}`).style.display = "block";
+    });
+  });
+
+  function projectCard(project, showChatLink) {
+    const card = el("div", { class: "ticket" });
+    card.appendChild(el("div", { class: "ticket__top" }, [
+      el("div", {}, [
+        el("h3", { class: "ticket__title" }, [el("a", { href: `project-detail?id=${project.id}` }, project.title)]),
+        el("p", { class: "ticket__desc" }, project.description || "")
+      ]),
+      el("span", { class: `badge badge--${project.status}` }, statusLabel(project.status))
+    ]));
+    card.appendChild(el("div", { class: "ticket__meta" }, [
+      el("span", {}, `${(project.members || []).length} / ${project.maxTeamSize} members`),
+      el("span", {}, project.category || "")
+    ]));
+    if (showChatLink) {
+      card.appendChild(el("a", { href: `project-chat?id=${project.id}`, class: "btn btn--outline btn--sm", style: "align-self:flex-start;" }, "Open Team Chat"));
+    }
+    return card;
+  }
+
+  async function loadMyProjects() {
+    const list = qs("#my-projects-list");
+    list.innerHTML = "";
+    const projects = await listProjectsByOwner(uid);
+    if (!projects.length) {
+      list.appendChild(el("div", { class: "empty" }, [
+        el("h3", {}, "No projects yet"),
+        el("p", {}, "Have an idea that needs teammates?"),
+        el("a", { href: "project-new", class: "btn btn--accent" }, "Create your first project")
+      ]));
+      return;
+    }
+    projects.forEach(p => list.appendChild(projectCard(p, true)));
+  }
+
+  async function loadJoinedProjects() {
+    const list = qs("#joined-list");
+    list.innerHTML = "";
+    const projects = (await listJoinedProjects(uid)).filter(p => p.ownerUid !== uid);
+    if (!projects.length) {
+      list.appendChild(el("div", { class: "empty" }, [
+        el("h3", {}, "You haven't joined a team yet"),
+        el("p", {}, "Browse open projects and apply to one that fits your skills."),
+        el("a", { href: "projects", class: "btn btn--accent" }, "Browse Projects")
+      ]));
+      return;
+    }
+    projects.forEach(p => list.appendChild(projectCard(p, true)));
+  }
+
+  async function loadApplications() {
+    const list = qs("#applications-list");
+    list.innerHTML = "";
+    const apps = await listApplicationsForApplicant(uid);
+    if (!apps.length) {
+      list.appendChild(el("div", { class: "empty" }, [
+        el("h3", {}, "No applications yet"),
+        el("p", {}, "Once you request to join a project, it'll show up here.")
+      ]));
+      return;
+    }
+    for (const app of apps.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0))) {
+      const project = await getProject(app.projectId).catch(() => null);
+      const row = el("div", { class: "card", style: "display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;" }, [
+        el("div", {}, [
+          el("strong", {}, (project && project.title) || "Project removed"),
+          el("div", { class: "muted mono", style: "font-size:0.8rem;" }, `Match at time of applying: ${app.matchScore}%`)
+        ]),
+        el("div", { style: "display:flex; align-items:center; gap:10px;" }, [
+          el("span", { class: `badge badge--${app.status}` }, statusLabel(app.status)),
+          app.status === "pending"
+            ? el("button", { class: "btn btn--outline btn--sm", onclick: async () => {
+                await withdrawApplication(app.id);
+                toast("Application withdrawn", "info");
+                loadApplications();
+              } }, "Withdraw")
+            : null
+        ])
+      ]);
+      list.appendChild(row);
+    }
+  }
+</script>
+</body>
+</html>

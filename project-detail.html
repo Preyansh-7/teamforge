@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project — TeamForge</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav__row">
+    <a href="index" class="nav__brand"><span class="mark"></span> TeamForge</a>
+    <div class="nav__links">
+      <a href="projects" class="hide-mobile">Browse Projects</a>
+      <div id="nav-auth" style="display:flex; gap:12px; align-items:center;"></div>
+    </div>
+  </div>
+</nav>
+
+<section style="padding-top:36px;">
+  <div class="container" id="content">
+    <span class="muted">Loading project…</span>
+  </div>
+</section>
+
+<script type="module">
+  import { watchAuthState } from "./js/auth.js";
+  import { getProject, updateProject } from "./js/db/projects.js";
+  import { listActiveSkills } from "./js/db/skills.js";
+  import { listAllUsers, getUserProfile } from "./js/db/users.js";
+  import { applyToProject, listApplicationsForOwner, acceptApplication, rejectApplication } from "./js/db/applications.js";
+  import { computeMatch } from "./js/matching.js";
+  import { qs, el, statusLabel, formatDate, toast, renderNavAuth } from "./js/ui.js";
+
+  const params = new URLSearchParams(window.location.search);
+  const projectId = params.get("id");
+  let currentUser = null, currentProfile = null, isAdminUser = false;
+  let skillsById = {};
+
+  watchAuthState(async (user, profile, isAdmin) => {
+    currentUser = user; currentProfile = profile; isAdminUser = isAdmin;
+    renderNavAuth(qs("#nav-auth"), user, profile, isAdmin);
+    const skills = await listActiveSkills();
+    skillsById = Object.fromEntries(skills.map(s => [s.id, s]));
+    renderProject();
+  });
+
+  async function renderProject() {
+    const content = qs("#content");
+    if (!projectId) { content.innerHTML = ""; content.appendChild(el("div", { class: "empty" }, [el("h3", {}, "No project specified")])); return; }
+
+    let project;
+    try { project = await getProject(projectId); }
+    catch (e) { content.innerHTML = ""; content.appendChild(el("div", { class: "empty" }, [el("h3", {}, "Couldn't load this project")])); return; }
+
+    if (!project) {
+      content.innerHTML = "";
+      content.appendChild(el("div", { class: "empty" }, [el("h3", {}, "Project not found"), el("p", {}, "It may have been removed.")]));
+      return;
+    }
+
+    const isOwner = currentUser && project.ownerUid === currentUser.uid;
+    const isMember = currentUser && (project.memberUids || []).includes(currentUser.uid);
+    const match = currentProfile ? computeMatch(currentProfile, project, skillsById) : null;
+
+    content.innerHTML = "";
+    const grid = el("div", { class: "grid grid--2", style: "align-items:flex-start;" });
+
+    // Left column: details
+    const left = el("div", { class: "card" });
+    left.appendChild(el("div", { style: "display:flex; justify-content:space-between; align-items:flex-start; gap:12px;" }, [
+      el("div", {}, [
+        el("h2", { style: "margin-bottom:4px;" }, project.title),
+        el("span", { class: `badge badge--${project.status}` }, statusLabel(project.status))
+      ]),
+      isOwner ? el("a", { href: `#`, class: "btn btn--outline btn--sm", onclick: (e) => { e.preventDefault(); toggleStatusPanel(); } }, "Manage status") : null
+    ]));
+    if (isMember) {
+      left.appendChild(el("a", { href: `project-chat?id=${project.id}`, class: "btn btn--accent btn--sm", style: "margin-top:12px; display:inline-flex;" }, "Open Team Chat"));
+    }
+    left.appendChild(el("p", {}, project.description || ""));
+    if (project.goals) { left.appendChild(el("h3", {}, "Goals")); left.appendChild(el("p", {}, project.goals)); }
+
+    left.appendChild(el("h3", {}, "Technologies"));
+    left.appendChild(el("div", { class: "ticket__tags", style: "margin-bottom:16px;" },
+      (project.technologies || []).map(t => el("span", { class: "tag" }, t))));
+
+    left.appendChild(el("h3", {}, "Required Skills"));
+    left.appendChild(el("div", { class: "ticket__tags", style: "margin-bottom:16px;" },
+      (project.requiredSkills || []).map(id => {
+        const label = (skillsById[id] && skillsById[id].name) || id;
+        if (!match) return el("span", { class: "tag" }, label);
+        const b = match.breakdown.find(x => x.skillId === id);
+        return el("span", { class: `tag ${b && b.matched ? "tag--hit" : "tag--miss"}` }, label);
+      })));
+
+    if ((project.requiredRoles || []).length) {
+      left.appendChild(el("h3", {}, "Looking For"));
+      left.appendChild(el("div", { class: "ticket__tags", style: "margin-bottom:16px;" },
+        project.requiredRoles.map(r => el("span", { class: "tag" }, r))));
+    }
+
+    left.appendChild(el("h3", {}, "Current Team"));
+    const teamList = el("div", { style: "display:flex; flex-direction:column; gap:6px; margin-bottom:16px;" });
+    for (const m of project.members || []) {
+      const u = await getUserProfile(m.uid).catch(() => null);
+      teamList.appendChild(el("div", { class: "mono", style: "font-size:0.88rem;" }, [
+        el("a", { href: `profile-view?uid=${m.uid}` }, (u && u.name) || "Unknown"),
+        ` — ${m.role}`
+      ]));
+    }
+    left.appendChild(teamList);
+
+    left.appendChild(el("div", { class: "ticket__meta" }, [
+      el("span", {}, `${(project.members || []).length} / ${project.maxTeamSize} members`),
+      el("span", {}, project.category || ""),
+      el("span", {}, formatDate(project.deadline))
+    ]));
+
+    grid.appendChild(left);
+
+    // Right column: match card + apply / manage
+    const right = el("div", { style: "display:flex; flex-direction:column; gap:18px;" });
+
+    if (match) {
+      const matchCard = el("div", { class: "card" }, [
+        el("div", { style: "display:flex; align-items:center; gap:14px;" }, [
+          el("div", { class: "stamp" }, [el("strong", {}, `${match.percent}%`), el("span", {}, "Match")]),
+          el("div", {}, [el("strong", {}, "Why this score"), el("p", { class: "muted", style: "margin:4px 0 0; font-size:0.85rem;" }, "Based on your selected skills against this project's requirements.")])
+        ])
+      ]);
+      right.appendChild(matchCard);
+    }
+
+    if (currentUser && !isOwner && !isAdminUser) {
+      const applyCard = el("div", { class: "card" });
+      applyCard.appendChild(el("h3", {}, "Request to Join"));
+      const msgInput = el("textarea", { rows: "3", placeholder: "Optional message to the project owner" });
+      applyCard.appendChild(el("div", { class: "field" }, [msgInput]));
+      const errBox = el("div", { class: "field-error" });
+      applyCard.appendChild(errBox);
+      const openSpots = project.maxTeamSize - (project.members || []).length;
+      const applyBtn = el("button", { class: "btn btn--accent btn--full" }, openSpots > 0 && project.status === "open" ? "Request to Join" : "Team not accepting applications");
+      applyBtn.disabled = !(openSpots > 0 && project.status === "open");
+      applyBtn.addEventListener("click", async () => {
+        applyBtn.disabled = true; applyBtn.textContent = "Sending…";
+        try {
+          await applyToProject(project.id, project.ownerUid, currentUser.uid, msgInput.value.trim(), match ? match.percent : 0);
+          toast("Application sent", "success");
+          applyBtn.textContent = "Application Sent";
+        } catch (err) {
+          errBox.textContent = err.message || "Couldn't send application.";
+          applyBtn.disabled = false; applyBtn.textContent = "Request to Join";
+        }
+      });
+      applyCard.appendChild(applyBtn);
+      right.appendChild(applyCard);
+    }
+
+    if (!currentUser) {
+      right.appendChild(el("div", { class: "card" }, [
+        el("p", {}, "Log in to see your match score and apply."),
+        el("a", { href: "login", class: "btn btn--primary btn--full" }, "Log in")
+      ]));
+    }
+
+    if (isOwner) {
+      const manageCard = el("div", { class: "card" });
+      manageCard.appendChild(el("h3", {}, "Applications"));
+      const appsBox = el("div", { id: "apps-box" }, [el("span", { class: "muted" }, "Loading…")]);
+      manageCard.appendChild(appsBox);
+      right.appendChild(manageCard);
+      loadApplications(project, appsBox);
+
+      const statusCard = el("div", { class: "card", id: "status-panel", style: "display:none;" });
+      statusCard.appendChild(el("h3", {}, "Project status"));
+      const statusSelect = el("select", {}, ["open", "in_progress", "completed", "closed"].map(s =>
+        el("option", { value: s, selected: project.status === s || false }, statusLabel(s))));
+      statusSelect.value = project.status;
+      const saveStatus = el("button", { class: "btn btn--outline btn--sm", style: "margin-top:10px;" }, "Update status");
+      saveStatus.addEventListener("click", async () => {
+        await updateProject(project.id, { status: statusSelect.value });
+        toast("Status updated", "success");
+        renderProject();
+      });
+      statusCard.appendChild(el("div", { class: "field" }, [statusSelect]));
+      statusCard.appendChild(saveStatus);
+      right.appendChild(statusCard);
+    }
+
+    grid.appendChild(right);
+    content.appendChild(grid);
+  }
+
+  function toggleStatusPanel() {
+    const panel = qs("#status-panel");
+    if (panel) panel.style.display = panel.style.display === "none" ? "block" : "none";
+  }
+
+  async function loadApplications(project, container) {
+    let apps;
+    try {
+      apps = await listApplicationsForOwner(project.id, currentUser.uid);
+    } catch (err) {
+      console.error("Failed to load applications:", err);
+      container.innerHTML = "";
+      container.appendChild(el("p", { class: "field-error" },
+        "Couldn't load applications. Open the console (F12) for the exact error - it's usually a missing Firestore index (look for a 'create it here' link) or a security rules issue."));
+      return;
+    }
+    const pending = apps.filter(a => a.status === "pending");
+    container.innerHTML = "";
+    if (!pending.length) {
+      container.appendChild(el("p", { class: "muted" }, "No pending applications."));
+      return;
+    }
+    for (const app of pending) {
+      const applicant = await getUserProfile(app.applicantUid).catch(() => null);
+      const row = el("div", { class: "card", style: "margin-bottom:10px; padding:14px;" });
+      row.appendChild(el("strong", {}, [el("a", { href: `profile-view?uid=${app.applicantUid}` }, (applicant && applicant.name) || "Unknown student")]));
+      row.appendChild(el("div", { class: "mono muted", style: "font-size:0.8rem; margin:4px 0 8px;" }, `Match: ${app.matchScore}%`));
+      if (app.message) row.appendChild(el("p", { style: "font-size:0.88rem;" }, app.message));
+      const actions = el("div", { style: "display:flex; gap:8px;" }, [
+        el("button", { class: "btn btn--accent btn--sm", onclick: async () => {
+          try {
+            await acceptApplication(app.id, project.id, app.applicantUid, "Member");
+            toast("Application accepted", "success");
+            renderProject();
+          } catch (e) { toast(e.message || "Couldn't accept application", "error"); }
+        } }, "Accept"),
+        el("button", { class: "btn btn--danger btn--sm", onclick: async () => {
+          try {
+            await rejectApplication(app.id);
+            toast("Application rejected", "info");
+            renderProject();
+          } catch (e) { toast(e.message || "Couldn't reject application", "error"); }
+        } }, "Reject")
+      ]);
+      row.appendChild(actions);
+      container.appendChild(row);
+    }
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Set up your profile — TeamForge</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav__row">
+    <a href="index" class="nav__brand"><span class="mark"></span> TeamForge</a>
+    <div class="nav__links" id="nav-auth"></div>
+  </div>
+</nav>
+
+<section>
+  <div class="container container--narrow">
+    <div class="card">
+      <h2>Set up your profile</h2>
+      <p class="muted">This is what project owners see when you apply to join their team.</p>
+
+      <div class="field">
+        <label for="bio">Short bio</label>
+        <textarea id="bio" rows="3" placeholder="Interested in AI, web development and game development."></textarea>
+      </div>
+
+      <div class="field">
+        <label for="experience">Experience level</label>
+        <select id="experience">
+          <option value="beginner">Beginner</option>
+          <option value="intermediate">Intermediate</option>
+          <option value="advanced">Advanced</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Skills</label>
+        <small>Select from the platform's skill list — this keeps matching consistent for everyone.</small>
+        <div id="skills-picker" class="ticket__tags" style="margin-top:8px;">
+          <span class="muted mono">Loading skills…</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="interests">Interests</label>
+        <input type="text" id="interests" placeholder="e.g. Artificial Intelligence, Web Development">
+        <small>Comma-separated. Used as a light secondary signal in project recommendations.</small>
+      </div>
+
+      <div class="field-error" id="form-error"></div>
+      <button id="save-btn" class="btn btn--primary btn--full">Finish setup</button>
+    </div>
+  </div>
+</section>
+
+<script type="module">
+  import { requireAuth } from "./js/auth.js";
+  import { updateUserProfile } from "./js/db/users.js";
+  import { listActiveSkills } from "./js/db/skills.js";
+  import { toast, qs, el, renderNavAuth } from "./js/ui.js";
+
+  let currentUid = null;
+  const selectedSkills = new Set();
+
+  requireAuth(async (user, profile, isAdmin) => {
+    currentUid = user.uid;
+    renderNavAuth(qs("#nav-auth"), user, profile, isAdmin);
+    if (isAdmin) { window.location.href = "admin/index"; return; }
+    if (profile) {
+      qs("#bio").value = profile.bio || "";
+      qs("#experience").value = profile.experience || "beginner";
+      qs("#interests").value = (profile.interests || []).join(", ");
+      (profile.skills || []).forEach(id => selectedSkills.add(id));
+    }
+    await loadSkills();
+  }, () => { window.location.href = "login"; });
+
+  async function loadSkills() {
+    const picker = qs("#skills-picker");
+    try {
+      const skills = await listActiveSkills();
+      picker.innerHTML = "";
+      if (!skills.length) {
+        picker.appendChild(el("span", { class: "muted" }, "No skills configured yet — ask an admin to add some."));
+        return;
+      }
+      skills.forEach(skill => {
+        const on = selectedSkills.has(skill.id);
+        const chip = el("span", {
+          class: `tag ${on ? "tag--on" : "tag--off"}`,
+          onclick: () => {
+            if (selectedSkills.has(skill.id)) selectedSkills.delete(skill.id);
+            else selectedSkills.add(skill.id);
+            loadSkillsRender(skills);
+          }
+        }, skill.name);
+        chip.dataset.id = skill.id;
+        picker.appendChild(chip);
+      });
+    } catch (err) {
+      picker.innerHTML = "";
+      picker.appendChild(el("span", { class: "field-error" }, "Couldn't load skills. Check your Firebase config."));
+    }
+  }
+
+  function loadSkillsRender(skills) {
+    const picker = qs("#skills-picker");
+    qsaChips(picker).forEach(chip => {
+      const on = selectedSkills.has(chip.dataset.id);
+      chip.className = `tag ${on ? "tag--on" : "tag--off"}`;
+    });
+  }
+  function qsaChips(root) { return Array.from(root.querySelectorAll(".tag")); }
+
+  qs("#save-btn").addEventListener("click", async () => {
+    const errorBox = qs("#form-error");
+    errorBox.textContent = "";
+    if (selectedSkills.size === 0) {
+      errorBox.textContent = "Select at least one skill so projects can match you.";
+      return;
+    }
+    const btn = qs("#save-btn");
+    btn.disabled = true; btn.textContent = "Saving…";
+    try {
+      const interests = qs("#interests").value.split(",").map(s => s.trim()).filter(Boolean);
+      await updateUserProfile(currentUid, {
+        bio: qs("#bio").value.trim(),
+        experience: qs("#experience").value,
+        interests,
+        skills: Array.from(selectedSkills),
+        profileComplete: true
+      });
+      toast("Profile saved", "success");
+      window.location.href = "dashboard";
+    } catch (err) {
+      errorBox.textContent = "Couldn't save your profile. Please try again.";
+      btn.disabled = false; btn.textContent = "Finish setup";
+    }
+  });
+</script>
+</body>
+</html>

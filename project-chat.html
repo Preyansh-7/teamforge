@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team Chat — TeamForge</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+<style>
+  .chat-shell { display: flex; flex-direction: column; height: calc(100vh - 170px); min-height: 420px; }
+  .chat-log { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 72%; padding: 10px 14px; border-radius: 10px; font-size: 0.92rem; line-height: 1.4; }
+  .msg--mine { align-self: flex-end; background: var(--steel); color: #fff; border-bottom-right-radius: 2px; }
+  .msg--theirs { align-self: flex-start; background: var(--surface); border: 1px solid var(--line); border-bottom-left-radius: 2px; }
+  .msg__author { font-family: var(--font-mono); font-size: 0.7rem; opacity: 0.75; margin-bottom: 3px; display: block; }
+  .msg__time { font-family: var(--font-mono); font-size: 0.65rem; opacity: 0.6; margin-top: 4px; display: block; }
+  .chat-input-row { display: flex; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--line); background: var(--surface); }
+  .chat-input-row textarea { flex: 1; resize: none; }
+  .typing-line { min-height: 22px; padding: 0 20px; font-size: 0.8rem; color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav__row">
+    <a href="index" class="nav__brand"><span class="mark"></span> TeamForge</a>
+    <div class="nav__links">
+      <a href="projects" class="hide-mobile">Browse Projects</a>
+      <div id="nav-auth" style="display:flex; gap:12px; align-items:center;"></div>
+    </div>
+  </div>
+</nav>
+
+<section style="padding-top:24px; padding-bottom:0;">
+  <div class="container" id="content">
+    <span class="muted">Loading…</span>
+  </div>
+</section>
+
+<script type="module">
+  import { requireAuth } from "./js/auth.js";
+  import { getProject } from "./js/db/projects.js";
+  import { watchMessages, sendMessage, watchTyping, setTyping, clearTyping } from "./js/db/messages.js";
+  import { qs, el, toast, formatDate, renderNavAuth } from "./js/ui.js";
+
+  const params = new URLSearchParams(window.location.search);
+  const projectId = params.get("id");
+  let currentUser = null, currentProfile = null;
+  let unsubMessages = null, unsubTyping = null, typingTimeout = null;
+
+  requireAuth(async (user, profile, isAdmin) => {
+    currentUser = user; currentProfile = profile;
+    renderNavAuth(qs("#nav-auth"), user, profile, isAdmin);
+    await init();
+  }, () => { window.location.href = "login"; });
+
+  window.addEventListener("beforeunload", () => {
+    if (projectId && currentUser) clearTyping(projectId, currentUser.uid);
+  });
+
+  async function init() {
+    const content = qs("#content");
+    if (!projectId) { content.innerHTML = ""; content.appendChild(el("div", { class: "empty" }, [el("h3", {}, "No project specified")])); return; }
+
+    let project;
+    try { project = await getProject(projectId); }
+    catch (e) { content.innerHTML = ""; content.appendChild(el("div", { class: "empty" }, [el("h3", {}, "Couldn't load this project")])); return; }
+
+    if (!project) {
+      content.innerHTML = "";
+      content.appendChild(el("div", { class: "empty" }, [el("h3", {}, "Project not found")]));
+      return;
+    }
+
+    const isMember = (project.memberUids || []).includes(currentUser.uid);
+    if (!isMember) {
+      content.innerHTML = "";
+      content.appendChild(el("div", { class: "empty" }, [
+        el("h3", {}, "Members only"),
+        el("p", {}, "Only accepted team members can access this project's chat."),
+        el("a", { href: `project-detail?id=${projectId}`, class: "btn btn--outline" }, "Back to project")
+      ]));
+      return;
+    }
+
+    content.innerHTML = "";
+    content.appendChild(el("div", { style: "display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;" }, [
+      el("div", {}, [
+        el("h2", { style: "margin-bottom:2px;" }, `${project.title} — Team Chat`),
+        el("span", { class: "muted", style: "font-size:0.85rem;" }, `${(project.members || []).length} members`)
+      ]),
+      el("a", { href: `project-detail?id=${projectId}`, class: "btn btn--outline btn--sm" }, "Back to project")
+    ]));
+
+    const shell = el("div", { class: "card", style: "padding:0; overflow:hidden;" });
+    const chatShell = el("div", { class: "chat-shell" });
+    const log = el("div", { class: "chat-log", id: "chat-log" }, [el("span", { class: "muted" }, "Loading messages…")]);
+    const typingLine = el("div", { class: "typing-line", id: "typing-line" });
+    const inputRow = el("div", { class: "chat-input-row" });
+    const textarea = el("textarea", { rows: "1", placeholder: "Message your team…" });
+    const sendBtn = el("button", { class: "btn btn--accent" }, "Send");
+    inputRow.appendChild(textarea);
+    inputRow.appendChild(sendBtn);
+    chatShell.appendChild(log);
+    chatShell.appendChild(typingLine);
+    chatShell.appendChild(inputRow);
+    shell.appendChild(chatShell);
+    content.appendChild(shell);
+
+    // Live message stream.
+    unsubMessages = watchMessages(projectId, (messages, err) => {
+      if (err) {
+        log.innerHTML = "";
+        log.appendChild(el("p", { class: "field-error" }, "Couldn't load messages. Check the console for details - likely a Firestore rules or index issue."));
+        return;
+      }
+      const wasNearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+      log.innerHTML = "";
+      if (!messages.length) {
+        log.appendChild(el("p", { class: "muted" }, "No messages yet. Say hello to your team."));
+      } else {
+        messages.forEach(m => log.appendChild(renderMessage(m)));
+      }
+      if (wasNearBottom || messages.length <= 1) log.scrollTop = log.scrollHeight;
+    });
+
+    // Live typing indicator.
+    unsubTyping = watchTyping(projectId, currentUser.uid, (typers) => {
+      if (!typers.length) { typingLine.textContent = ""; return; }
+      const names = typers.map(t => t.name || "Someone");
+      typingLine.textContent = names.length === 1
+        ? `${names[0]} is typing…`
+        : `${names.join(", ")} are typing…`;
+    });
+
+    function renderMessage(m) {
+      const mine = m.authorUid === currentUser.uid;
+      const bubble = el("div", { class: `msg ${mine ? "msg--mine" : "msg--theirs"}` });
+      if (!mine) bubble.appendChild(el("span", { class: "msg__author" }, m.authorName || "Teammate"));
+      bubble.appendChild(el("span", {}, m.text));
+      bubble.appendChild(el("span", { class: "msg__time" }, formatDate(m.createdAt)));
+      return bubble;
+    }
+
+    textarea.addEventListener("input", () => {
+      textarea.style.height = "auto";
+      textarea.style.height = Math.min(textarea.scrollHeight, 120) + "px";
+      setTyping(projectId, currentUser.uid, currentProfile?.name || "Someone");
+      clearTimeout(typingTimeout);
+      typingTimeout = setTimeout(() => clearTyping(projectId, currentUser.uid), 2500);
+    });
+
+    async function send() {
+      const text = textarea.value.trim();
+      if (!text) return;
+      textarea.value = "";
+      textarea.style.height = "auto";
+      clearTimeout(typingTimeout);
+      clearTyping(projectId, currentUser.uid);
+      try {
+        await sendMessage(projectId, currentUser.uid, currentProfile?.name || "Someone", text);
+      } catch (err) {
+        toast(err.message || "Couldn't send message", "error");
+      }
+    }
+
+    sendBtn.addEventListener("click", send);
+    textarea.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+    });
+  }
+</script>
+</body>
+</html>

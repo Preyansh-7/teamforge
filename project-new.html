@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Create a Project — TeamForge</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav__row">
+    <a href="index" class="nav__brand"><span class="mark"></span> TeamForge</a>
+    <div class="nav__links"><div id="nav-auth" style="display:flex; gap:12px; align-items:center;"></div></div>
+  </div>
+</nav>
+
+<section>
+  <div class="container container--narrow">
+    <div class="card">
+      <h2>Create a project</h2>
+      <p class="muted">Publish it and it'll appear in the marketplace immediately.</p>
+
+      <div class="field">
+        <label for="title">Project title</label>
+        <input type="text" id="title" required>
+      </div>
+      <div class="field">
+        <label for="description">Short description</label>
+        <textarea id="description" rows="2"></textarea>
+      </div>
+      <div class="field">
+        <label for="goals">Goals</label>
+        <textarea id="goals" rows="2" placeholder="What does this project aim to achieve?"></textarea>
+      </div>
+      <div class="field">
+        <label for="category">Category</label>
+        <select id="category"><option value="">Loading categories…</option></select>
+      </div>
+      <div class="field">
+        <label for="technologies">Technologies</label>
+        <input type="text" id="technologies" placeholder="Comma-separated, e.g. Python, Firebase, React">
+      </div>
+      <div class="field">
+        <label>Required skills</label>
+        <div id="skills-picker" class="ticket__tags" style="margin-top:8px;"></div>
+      </div>
+      <div class="field">
+        <label for="roles">Required roles</label>
+        <input type="text" id="roles" placeholder="Comma-separated, e.g. Backend Developer, UI/UX Designer">
+      </div>
+      <div class="field">
+        <label for="team-size">Maximum team size</label>
+        <input type="number" id="team-size" min="1" value="4" required>
+      </div>
+      <div class="field">
+        <label for="deadline">Deadline (optional)</label>
+        <input type="date" id="deadline">
+      </div>
+
+      <div class="field-error" id="form-error"></div>
+      <div style="display:flex; gap:10px;">
+        <button id="publish-btn" class="btn btn--accent">Publish Project</button>
+        <a href="projects" class="btn btn--outline">Cancel</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script type="module">
+  import { requireAuth } from "./js/auth.js";
+  import { createProject } from "./js/db/projects.js";
+  import { listActiveSkills } from "./js/db/skills.js";
+  import { listActiveCategories } from "./js/db/categories.js";
+  import { toast, qs, el, renderNavAuth } from "./js/ui.js";
+
+  let uid = null;
+  const selectedSkills = new Set();
+
+  requireAuth(async (user, profile, isAdmin) => {
+    uid = user.uid;
+    renderNavAuth(qs("#nav-auth"), user, profile, isAdmin);
+
+    const categories = await listActiveCategories();
+    const catSelect = qs("#category");
+    catSelect.innerHTML = "";
+    if (!categories.length) catSelect.appendChild(el("option", { value: "" }, "No categories yet — ask an admin"));
+    categories.forEach(c => catSelect.appendChild(el("option", { value: c.name }, c.name)));
+
+    const skills = await listActiveSkills();
+    const picker = qs("#skills-picker");
+    skills.forEach(skill => {
+      const chip = el("span", {
+        class: "tag tag--off",
+        onclick: () => {
+          if (selectedSkills.has(skill.id)) selectedSkills.delete(skill.id);
+          else selectedSkills.add(skill.id);
+          chip.className = `tag ${selectedSkills.has(skill.id) ? "tag--on" : "tag--off"}`;
+        }
+      }, skill.name);
+      picker.appendChild(chip);
+    });
+  }, () => { window.location.href = "login"; });
+
+  qs("#publish-btn").addEventListener("click", async () => {
+    const errorBox = qs("#form-error");
+    errorBox.textContent = "";
+    const title = qs("#title").value.trim();
+    const teamSize = parseInt(qs("#team-size").value, 10);
+    if (!title) { errorBox.textContent = "Give your project a title."; return; }
+    if (!teamSize || teamSize < 1) { errorBox.textContent = "Maximum team size must be at least 1."; return; }
+    if (selectedSkills.size === 0) { errorBox.textContent = "Select at least one required skill."; return; }
+
+    const btn = qs("#publish-btn");
+    btn.disabled = true; btn.textContent = "Publishing…";
+    try {
+      const deadlineVal = qs("#deadline").value;
+      const ref = await createProject(uid, {
+        title,
+        description: qs("#description").value.trim(),
+        goals: qs("#goals").value.trim(),
+        category: qs("#category").value,
+        technologies: qs("#technologies").value.split(",").map(s => s.trim()).filter(Boolean),
+        requiredSkills: Array.from(selectedSkills),
+        requiredRoles: qs("#roles").value.split(",").map(s => s.trim()).filter(Boolean),
+        maxTeamSize: teamSize,
+        deadline: deadlineVal ? new Date(deadlineVal) : null
+      });
+      toast("Project published", "success");
+      window.location.href = `project-detail?id=${ref.id}`;
+    } catch (err) {
+      errorBox.textContent = "Couldn't publish the project. Please try again.";
+      btn.disabled = false; btn.textContent = "Publish Project";
+    }
+  });
+</script>
+</body>
+</html>

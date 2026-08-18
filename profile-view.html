@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Profile — TeamForge</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav__row">
+    <a href="index" class="nav__brand"><span class="mark"></span> TeamForge</a>
+    <div class="nav__links">
+      <a href="projects" class="hide-mobile">Browse Projects</a>
+      <div id="nav-auth" style="display:flex; gap:12px; align-items:center;"></div>
+    </div>
+  </div>
+</nav>
+
+<section style="padding-top:36px;">
+  <div class="container container--narrow" id="content">
+    <span class="muted">Loading profile…</span>
+  </div>
+</section>
+
+<script type="module">
+  import { watchAuthState } from "./js/auth.js";
+  import { getUserProfile } from "./js/db/users.js";
+  import { listActiveSkills } from "./js/db/skills.js";
+  import { qs, el, statusLabel, renderNavAuth } from "./js/ui.js";
+
+  const params = new URLSearchParams(window.location.search);
+  const targetUid = params.get("uid");
+  let viewerUid = null;
+
+  watchAuthState(async (user, profile, isAdmin) => {
+    viewerUid = user ? user.uid : null;
+    renderNavAuth(qs("#nav-auth"), user, profile, isAdmin);
+    await render();
+  });
+
+  async function render() {
+    const content = qs("#content");
+    if (!targetUid) {
+      content.innerHTML = "";
+      content.appendChild(el("div", { class: "empty" }, [el("h3", {}, "No profile specified")]));
+      return;
+    }
+
+    let profile, skills;
+    try {
+      [profile, skills] = await Promise.all([getUserProfile(targetUid), listActiveSkills()]);
+    } catch (e) {
+      content.innerHTML = "";
+      content.appendChild(el("div", { class: "empty" }, [el("h3", {}, "Couldn't load this profile")]));
+      return;
+    }
+
+    if (!profile) {
+      content.innerHTML = "";
+      content.appendChild(el("div", { class: "empty" }, [el("h3", {}, "Profile not found")]));
+      return;
+    }
+
+    const skillsById = Object.fromEntries(skills.map(s => [s.id, s]));
+    const isOwnProfile = viewerUid === targetUid;
+
+    content.innerHTML = "";
+    const card = el("div", { class: "card" });
+    card.appendChild(el("div", { style: "display:flex; justify-content:space-between; align-items:flex-start; gap:12px;" }, [
+      el("div", {}, [
+        el("h2", { style: "margin-bottom:4px;" }, profile.name || "Unnamed student"),
+        el("span", { class: "tag mono" }, statusLabel(profile.experience || "beginner"))
+      ]),
+      isOwnProfile ? el("a", { href: "profile-edit", class: "btn btn--outline btn--sm" }, "Edit Profile") : null
+    ]));
+
+    if (profile.bio) card.appendChild(el("p", { style: "margin-top:14px;" }, profile.bio));
+    else card.appendChild(el("p", { class: "muted", style: "margin-top:14px;" }, "No bio yet."));
+
+    card.appendChild(el("h3", { style: "margin-top:20px;" }, "Skills"));
+    card.appendChild(el("div", { class: "ticket__tags", style: "margin-bottom:16px;" },
+      (profile.skills || []).length
+        ? profile.skills.map(id => el("span", { class: "tag" }, (skillsById[id] && skillsById[id].name) || id))
+        : [el("span", { class: "muted" }, "No skills listed yet.")]));
+
+    if ((profile.interests || []).length) {
+      card.appendChild(el("h3", {}, "Interests"));
+      card.appendChild(el("div", { class: "ticket__tags" },
+        profile.interests.map(i => el("span", { class: "tag" }, i))));
+    }
+
+    content.appendChild(card);
+  }
+</script>
+</body>
+</html>

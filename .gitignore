@@ -1,0 +1,77 @@
+# ============================================================
+# 🔐 FIREBASE ADMIN / SERVICE ACCOUNT SECRETS
+# NEVER commit these files to GitHub.
+# ============================================================
+
+# Your actual Firebase Admin SDK key
+admin-scripts/service-account.json
+
+# Catch common service-account key naming variations
+service-account*.json
+*-firebase-adminsdk-*.json
+*.service-AccountKey.json
+*.service-account.json
+
+
+# ============================================================
+# 🔥 FIREBASE CLI LOCAL FILES / LOGS
+# ============================================================
+
+.firebase/
+.firebaserc.local
+
+firebase-debug.log
+firebase-debug.*.log
+firestore-debug.log
+ui-debug.log
+pubsub-debug.log
+
+
+# ============================================================
+# 🧪 FIREBASE EMULATOR DATA
+# ============================================================
+
+firebase-export-*/
+
+
+# ============================================================
+# 🔑 ENVIRONMENT / SECRET FILES
+# ============================================================
+
+.env
+.env.local
+.env.*.local
+
+
+# ============================================================
+# 📦 NODE.JS
+# ============================================================
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+
+# ============================================================
+# 💻 OS / EDITOR FILES
+# ============================================================
+
+.DS_Store
+Thumbs.db
+
+.vscode/
+.idea/
+
+*.swp
+*.swo
+*~
+
+
+# ============================================================
+# 📝 MISC LOG / TEMP FILES
+# ============================================================
+
+*.log
+*.tmp

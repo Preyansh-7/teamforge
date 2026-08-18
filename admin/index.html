@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin — TeamForge</title>
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="../css/components.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav__row">
+    <a href="../index" class="nav__brand"><span class="mark"></span> TeamForge <span class="mono muted" style="font-size:0.7rem;">ADMIN</span></a>
+    <div class="nav__links"><div id="nav-auth" style="display:flex; gap:12px; align-items:center;"></div></div>
+  </div>
+</nav>
+
+<section style="padding-top:36px;">
+  <div class="container">
+    <h2>Admin Dashboard</h2>
+
+    <div class="grid grid--4" id="stats-row" style="margin-bottom:28px;">
+      <div class="card"><div class="mono muted" style="font-size:0.75rem;">STUDENTS</div><h3 id="stat-students">—</h3></div>
+      <div class="card"><div class="mono muted" style="font-size:0.75rem;">ACTIVE PROJECTS</div><h3 id="stat-projects">—</h3></div>
+      <div class="card"><div class="mono muted" style="font-size:0.75rem;">COMPLETED PROJECTS</div><h3 id="stat-completed">—</h3></div>
+      <div class="card"><div class="mono muted" style="font-size:0.75rem;">PENDING APPLICATIONS</div><h3 id="stat-pending">—</h3></div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="users">Users</button>
+      <button class="tab" data-tab="projects">Projects</button>
+      <button class="tab" data-tab="skills">Skills</button>
+      <button class="tab" data-tab="categories">Categories</button>
+    </div>
+
+    <div id="tab-users" class="tab-panel">
+      <div class="field" style="max-width:320px;"><input type="text" id="user-search" placeholder="Search users by name or email"></div>
+      <table class="data"><thead><tr><th>Name</th><th>Email</th><th>Status</th><th></th></tr></thead><tbody id="users-body"></tbody></table>
+    </div>
+
+    <div id="tab-projects" class="tab-panel" style="display:none;">
+      <div class="field" style="max-width:320px;"><input type="text" id="project-search" placeholder="Search projects by title"></div>
+      <table class="data"><thead><tr><th>Title</th><th>Owner</th><th>Category</th><th>Status</th><th></th></tr></thead><tbody id="projects-body"></tbody></table>
+    </div>
+
+    <div id="tab-skills" class="tab-panel" style="display:none;">
+      <div class="card" style="max-width:480px; margin-bottom:20px;">
+        <h3>Add a skill</h3>
+        <div style="display:flex; gap:10px;">
+          <input type="text" id="new-skill-name" placeholder="e.g. Python">
+          <button class="btn btn--accent" id="add-skill-btn">Add</button>
+        </div>
+      </div>
+      <table class="data"><thead><tr><th>Skill</th><th>Status</th><th></th></tr></thead><tbody id="skills-body"></tbody></table>
+    </div>
+
+    <div id="tab-categories" class="tab-panel" style="display:none;">
+      <div class="card" style="max-width:480px; margin-bottom:20px;">
+        <h3>Add a category</h3>
+        <div style="display:flex; gap:10px;">
+          <input type="text" id="new-category-name" placeholder="e.g. Game Development">
+          <button class="btn btn--accent" id="add-category-btn">Add</button>
+        </div>
+      </div>
+      <table class="data"><thead><tr><th>Category</th><th>Status</th><th></th></tr></thead><tbody id="categories-body"></tbody></table>
+    </div>
+
+  </div>
+</section>
+
+<script type="module">
+  import { requireAuth } from "../js/auth.js";
+  import { listAllUsers, setUserStatus } from "../js/db/users.js";
+  import { listAllProjects, updateProject } from "../js/db/projects.js";
+  import { listAllSkills, addSkill, setSkillActive } from "../js/db/skills.js";
+  import { listAllCategories, addCategory, setCategoryActive } from "../js/db/categories.js";
+  import { listApplicationsForProject } from "../js/db/applications.js";
+  import { qs, qsa, el, toast, renderNavAuth } from "../js/ui.js";
+
+  let adminUid = null;
+  let allUsers = [], allProjects = [], allSkills = [], allCategories = [];
+
+  requireAuth(async (user, profile, isAdmin) => {
+    if (!isAdmin) { window.location.href = "../dashboard"; return; }
+    adminUid = user.uid;
+    renderNavAuth(qs("#nav-auth"), user, profile, isAdmin);
+    await loadAll();
+  }, () => { window.location.href = "../login"; });
+
+  async function loadAll() {
+    [allUsers, allProjects, allSkills, allCategories] = await Promise.all([
+      listAllUsers(), listAllProjects(), listAllSkills(), listAllCategories()
+    ]);
+    renderStats();
+    renderUsers();
+    renderProjects();
+    renderSkills();
+    renderCategories();
+  }
+
+  async function renderStats() {
+    qs("#stat-students").textContent = allUsers.filter(u => u.role === "student").length;
+    qs("#stat-projects").textContent = allProjects.filter(p => p.status === "open" || p.status === "in_progress").length;
+    qs("#stat-completed").textContent = allProjects.filter(p => p.status === "completed").length;
+    let pending = 0;
+    for (const p of allProjects) {
+      const apps = await listApplicationsForProject(p.id).catch(() => []);
+      pending += apps.filter(a => a.status === "pending").length;
+    }
+    qs("#stat-pending").textContent = pending;
+  }
+
+  qsa(".tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      qsa(".tab").forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      qsa(".tab-panel").forEach(p => p.style.display = "none");
+      qs(`#tab-${tab.dataset.tab}`).style.display = "block";
+    });
+  });
+
+  function renderUsers() {
+    const search = (qs("#user-search").value || "").toLowerCase();
+    const body = qs("#users-body");
+    body.innerHTML = "";
+    allUsers.filter(u => !search || (u.name || "").toLowerCase().includes(search) || (u.email || "").toLowerCase().includes(search))
+      .forEach(u => {
+        const row = el("tr", {}, [
+          el("td", {}, u.name || "—"),
+          el("td", {}, u.email || "—"),
+          el("td", {}, [el("span", { class: `badge badge--${u.status || "active"}` }, u.status || "active")]),
+          el("td", {}, [
+            el("button", {
+              class: "btn btn--outline btn--sm",
+              onclick: async () => {
+                const next = u.status === "suspended" ? "active" : "suspended";
+                await setUserStatus(u.id, next);
+                toast(`User ${next === "suspended" ? "suspended" : "restored"}`, "info");
+                loadAll();
+              }
+            }, u.status === "suspended" ? "Restore" : "Suspend")
+          ])
+        ]);
+        body.appendChild(row);
+      });
+  }
+  qs("#user-search").addEventListener("input", renderUsers);
+
+  function renderProjects() {
+    const search = (qs("#project-search").value || "").toLowerCase();
+    const body = qs("#projects-body");
+    body.innerHTML = "";
+    allProjects.filter(p => !search || (p.title || "").toLowerCase().includes(search))
+      .forEach(p => {
+        const owner = allUsers.find(u => u.id === p.ownerUid);
+        const row = el("tr", {}, [
+          el("td", {}, [el("a", { href: `../project-detail?id=${p.id}` }, p.title)]),
+          el("td", {}, (owner && owner.name) || "—"),
+          el("td", {}, p.category || "—"),
+          el("td", {}, [el("span", { class: `badge badge--${p.status}` }, p.status)]),
+          el("td", {}, [
+            el("button", {
+              class: "btn btn--danger btn--sm",
+              onclick: async () => {
+                if (!confirm(`Close "${p.title}"? This marks it as closed platform-wide.`)) return;
+                await updateProject(p.id, { status: "closed" });
+                toast("Project closed", "info");
+                loadAll();
+              }
+            }, "Close")
+          ])
+        ]);
+        body.appendChild(row);
+      });
+  }
+  qs("#project-search").addEventListener("input", renderProjects);
+
+  function renderSkills() {
+    const body = qs("#skills-body");
+    body.innerHTML = "";
+    allSkills.forEach(s => {
+      body.appendChild(el("tr", {}, [
+        el("td", {}, s.name),
+        el("td", {}, [el("span", { class: `badge badge--${s.active ? "active" : "closed"}` }, s.active ? "Active" : "Disabled")]),
+        el("td", {}, [
+          el("button", {
+            class: "btn btn--outline btn--sm",
+            onclick: async () => { await setSkillActive(s.id, !s.active); toast("Skill updated", "info"); loadAll(); }
+          }, s.active ? "Disable" : "Enable")
+        ])
+      ]));
+    });
+  }
+  qs("#add-skill-btn").addEventListener("click", async () => {
+    const input = qs("#new-skill-name");
+    const name = input.value.trim();
+    if (!name) return;
+    await addSkill(name, null, adminUid);
+    input.value = "";
+    toast("Skill added", "success");
+    loadAll();
+  });
+
+  function renderCategories() {
+    const body = qs("#categories-body");
+    body.innerHTML = "";
+    allCategories.forEach(c => {
+      body.appendChild(el("tr", {}, [
+        el("td", {}, c.name),
+        el("td", {}, [el("span", { class: `badge badge--${c.active ? "active" : "closed"}` }, c.active ? "Active" : "Disabled")]),
+        el("td", {}, [
+          el("button", {
+            class: "btn btn--outline btn--sm",
+            onclick: async () => { await setCategoryActive(c.id, !c.active); toast("Category updated", "info"); loadAll(); }
+          }, c.active ? "Disable" : "Enable")
+        ])
+      ]));
+    });
+  }
+  qs("#add-category-btn").addEventListener("click", async () => {
+    const input = qs("#new-category-name");
+    const name = input.value.trim();
+    if (!name) return;
+    await addCategory(name);
+    input.value = "";
+    toast("Category added", "success");
+    loadAll();
+  });
+</script>
+</body>
+</html>

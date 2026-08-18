@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TeamForge — Find the right people for your next project</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="container nav__row">
+    <a href="index" class="nav__brand"><span class="mark"></span> TeamForge</a>
+    <div class="nav__links">
+      <a href="projects" class="hide-mobile">Browse Projects</a>
+      <div id="nav-auth" style="display:flex; gap:12px; align-items:center;"></div>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container hero__grid">
+    <div>
+      <div class="hero__eyebrow">Student project collaboration</div>
+      <h1>Find the right people for your next project.</h1>
+      <p style="font-size:1.1rem;">Post a project that needs teammates, or browse projects that need someone like you. TeamForge matches students to projects by actual skill overlap — not just who happens to see your group chat message.</p>
+      <div class="hero__actions">
+        <a href="projects" class="btn btn--primary">Browse Projects</a>
+        <a href="signup" class="btn btn--accent">Create Your Profile</a>
+      </div>
+    </div>
+    <div class="hero__panel">
+      <div class="ticket__top">
+        <div>
+          <h3 class="ticket__title">Campus AI Assistant</h3>
+          <p class="ticket__desc">Helps students find and organize academic resources using AI.</p>
+        </div>
+        <div class="stamp"><strong>87%</strong><span>Match</span></div>
+      </div>
+      <div class="ticket__tags">
+        <span class="tag tag--hit">Python</span>
+        <span class="tag tag--hit">JavaScript</span>
+        <span class="tag tag--hit">Firebase</span>
+        <span class="tag tag--miss">Node.js</span>
+      </div>
+      <div class="ticket__meta">
+        <span>2 / 4 members</span>
+        <span>AI / ML</span>
+        <span>Open</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="container">
+    <div class="section-title">
+      <div class="hero__eyebrow">How it works</div>
+      <h2>From idea to team, in four steps</h2>
+    </div>
+    <div class="grid grid--2" style="max-width:760px; margin:0 auto; row-gap:32px;">
+      <div class="step">
+        <div class="step__num">1</div>
+        <div><h3>Build your profile</h3><p>Add your skills, interests, and experience level from the platform's controlled skill list — no duplicate spellings, no guessing what "React" vs "react.js" means to a matching algorithm.</p></div>
+      </div>
+      <div class="step">
+        <div class="step__num">2</div>
+        <div><h3>Post or browse projects</h3><p>Post a project with the roles and skills you need, or search the marketplace for projects that fit what you already know.</p></div>
+      </div>
+      <div class="step">
+        <div class="step__num">3</div>
+        <div><h3>Apply with a match score</h3><p>Every project shows a transparent match percentage with a skill-by-skill breakdown — you'll know exactly why you're a fit before you apply.</p></div>
+      </div>
+      <div class="step">
+        <div class="step__num">4</div>
+        <div><h3>Form your team and track progress</h3><p>Once you're accepted, a lightweight workspace helps the team track tasks and see real progress — not just a group chat that goes quiet after week two.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="background:var(--surface); border-top:1px solid var(--line); border-bottom:1px solid var(--line);">
+  <div class="container">
+    <div class="section-title">
+      <div class="hero__eyebrow">Why TeamForge</div>
+      <h2>Built for the actual college problem</h2>
+    </div>
+    <div class="grid grid--3">
+      <div class="card">
+        <h3>Explainable matching</h3>
+        <p>No black box. Every match score shows exactly which required skills you have and which you're missing.</p>
+      </div>
+      <div class="card">
+        <h3>A controlled skill list</h3>
+        <p>Skills are standardized platform-wide, so filtering and matching actually work instead of breaking on spelling variants.</p>
+      </div>
+      <div class="card">
+        <h3>A workspace that isn't bloated</h3>
+        <p>Just enough structure — members, tasks, progress — to prove the team is actually doing something, without recreating Jira.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container" style="text-align:center;">
+    <h2>Ready to find your team?</h2>
+    <p>It takes two minutes to build a profile.</p>
+    <div class="hero__actions" style="justify-content:center;">
+      <a href="signup" class="btn btn--accent">Sign Up</a>
+      <a href="projects" class="btn btn--outline">Browse Projects First</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <span>TeamForge — a student project collaboration platform</span>
+    <span class="mono">Built with HTML, CSS, JS &amp; Firebase</span>
+  </div>
+</footer>
+
+<script type="module">
+  import { watchAuthState } from "./js/auth.js";
+  import { renderNavAuth, qs } from "./js/ui.js";
+  watchAuthState((user, profile, isAdmin) => {
+    renderNavAuth(qs("#nav-auth"), user, profile, isAdmin);
+  });
+</script>
+</body>
+</html>
